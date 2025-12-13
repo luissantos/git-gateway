@@ -44,7 +44,10 @@ type DBConfiguration struct {
 
 // JWTConfiguration holds all the JWT related configuration.
 type JWTConfiguration struct {
-	Secret string `json:"secret" required:"true"`
+	// possible values: HS256, RS256
+	Algorithm string `json:"algorithm" default:"HS256"`
+	Secret    string `json:"secret" required:"true"`
+	PublicKey string `json:"public_key"`
 }
 
 // GlobalConfiguration holds all the configuration that applies to all instances.

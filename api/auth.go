@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"os"
+
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 )
@@ -36,8 +38,26 @@ func (a *API) extractBearerToken(w http.ResponseWriter, r *http.Request) (string
 
 func (a *API) parseJWTClaims(bearer string, r *http.Request) (context.Context, error) {
 	config := getConfig(r.Context())
-	p := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}))
+	parserOption := jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name})
+	if config.JWT.Algorithm == "RS256" {
+		parserOption = jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Name})
+	}
+
+	p := jwt.NewParser(parserOption)
 	token, err := p.ParseWithClaims(bearer, &GatewayClaims{}, func(token *jwt.Token) (interface{}, error) {
+
+		if config.JWT.Algorithm == "RS256" {
+			dat, err := os.ReadFile(config.JWT.PublicKey)
+			if err != nil {
+				return nil, err
+			}
+			pubKey, err := jwt.ParseRSAPublicKeyFromPEM(dat)
+			if err != nil {
+				return nil, err
+			}
+			return pubKey, nil
+		}
+
 		return []byte(config.JWT.Secret), nil
 	})
 	if err != nil {
