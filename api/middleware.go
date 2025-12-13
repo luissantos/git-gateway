@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/netlify/git-gateway/models"
 )
 
@@ -16,7 +16,7 @@ type NetlifyMicroserviceClaims struct {
 	SiteURL    string `json:"site_url"`
 	InstanceID string `json:"id"`
 	NetlifyID  string `json:"netlify_id"`
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 }
 
 func (a *API) loadJWSSignatureHeader(w http.ResponseWriter, r *http.Request) (context.Context, error) {
@@ -37,7 +37,7 @@ func (a *API) loadInstanceConfig(w http.ResponseWriter, r *http.Request) (contex
 	}
 
 	claims := NetlifyMicroserviceClaims{}
-	p := jwt.Parser{ValidMethods: []string{jwt.SigningMethodHS256.Name}}
+	p := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}))
 	_, err := p.ParseWithClaims(signature, &claims, func(token *jwt.Token) (interface{}, error) {
 		return []byte(a.config.OperatorToken), nil
 	})

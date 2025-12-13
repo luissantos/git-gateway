@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	jwt "github.com/dgrijalva/jwt-go"
 	"github.com/go-chi/chi"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/netlify/git-gateway/conf"
 	"github.com/netlify/git-gateway/storage"
 	"github.com/netlify/git-gateway/storage/dial"
@@ -35,7 +35,7 @@ type API struct {
 }
 
 type GatewayClaims struct {
-	jwt.StandardClaims
+	jwt.RegisteredClaims
 	Email        string                 `json:"email"`
 	AppMetaData  map[string]interface{} `json:"app_metadata"`
 	UserMetaData map[string]interface{} `json:"user_metadata"`

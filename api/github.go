@@ -62,7 +62,7 @@ func (gh *GitHubGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := gh.authenticate(w, r); err != nil {
-		handleError(unauthorizedError(err.Error()), w, r)
+		handleError(unauthorizedError("%s", err.Error()), w, r)
 		return
 	}
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/url"
 
-	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/netlify/git-gateway/conf"
 	"github.com/netlify/git-gateway/models"
 )
@@ -48,6 +48,7 @@ func getToken(ctx context.Context) *jwt.Token {
 
 func getClaims(ctx context.Context) *GatewayClaims {
 	token := getToken(ctx)
+
 	if token == nil {
 		return nil
 	}

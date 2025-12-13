@@ -120,7 +120,7 @@ func (bb *BitBucketGateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := bb.authenticate(w, r); err != nil {
-		handleError(unauthorizedError(err.Error()), w, r)
+		handleError(unauthorizedError("%s", err.Error()), w, r)
 		return
 	}
 

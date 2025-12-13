@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/sirupsen/logrus"
 )
 
@@ -36,7 +36,7 @@ func (a *API) extractBearerToken(w http.ResponseWriter, r *http.Request) (string
 
 func (a *API) parseJWTClaims(bearer string, r *http.Request) (context.Context, error) {
 	config := getConfig(r.Context())
-	p := jwt.Parser{ValidMethods: []string{jwt.SigningMethodHS256.Name}}
+	p := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}))
 	token, err := p.ParseWithClaims(bearer, &GatewayClaims{}, func(token *jwt.Token) (interface{}, error) {
 		return []byte(config.JWT.Secret), nil
 	})
