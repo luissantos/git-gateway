@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-chi/chi"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/lestrrat-go/httprc/v3"
+	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/netlify/git-gateway/conf"
 	"github.com/netlify/git-gateway/storage"
 	"github.com/netlify/git-gateway/storage/dial"
@@ -28,10 +30,11 @@ var bearerRegexp = regexp.MustCompile(`^(?:B|b)earer (\S+$)`)
 
 // API is the main REST API
 type API struct {
-	handler http.Handler
-	db      storage.Connection
-	config  *conf.GlobalConfiguration
-	version string
+	handler  http.Handler
+	db       storage.Connection
+	config   *conf.GlobalConfiguration
+	version  string
+	jwkCache *jwk.Cache
 }
 
 type GatewayClaims struct {
@@ -82,7 +85,11 @@ func NewAPI(globalConfig *conf.GlobalConfiguration, db storage.Connection) *API 
 
 // NewAPIWithVersion creates a new REST API using the specified version
 func NewAPIWithVersion(ctx context.Context, globalConfig *conf.GlobalConfiguration, db storage.Connection, version string) *API {
-	api := &API{config: globalConfig, db: db, version: version}
+	c, err := jwk.NewCache(ctx, httprc.NewClient())
+	if err != nil {
+		logrus.Fatalf("Error creating JWK cache: %+v", err)
+	}
+	api := &API{config: globalConfig, db: db, version: version, jwkCache: c}
 
 	xffmw, _ := xff.Default()
 

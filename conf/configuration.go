@@ -48,6 +48,8 @@ type JWTConfiguration struct {
 	Algorithm string `json:"algorithm" default:"HS256"`
 	Secret    string `json:"secret" required:"true"`
 	PublicKey string `json:"public_key" envconfig:"PUBLIC_KEY"`
+	JwksURL   string `json:"jwks_url" envconfig:"JWKS_URL"`
+	Audience  string `json:"audience" envconfig:"AUDIENCE" required:"true"`
 }
 
 // GlobalConfiguration holds all the configuration that applies to all instances.

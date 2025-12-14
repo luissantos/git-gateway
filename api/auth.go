@@ -2,11 +2,14 @@ package api
 
 import (
 	"context"
+	"crypto/rsa"
 	"net/http"
+	"strings"
 
 	"os"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/sirupsen/logrus"
 )
 
@@ -43,10 +46,49 @@ func (a *API) parseJWTClaims(bearer string, r *http.Request) (context.Context, e
 		parserOption = jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Name})
 	}
 
-	p := jwt.NewParser(parserOption)
+	audienceOption := jwt.WithAudience(config.JWT.Audience)
+
+	p := jwt.NewParser(parserOption, audienceOption)
 	token, err := p.ParseWithClaims(bearer, &GatewayClaims{}, func(token *jwt.Token) (interface{}, error) {
 
 		if config.JWT.Algorithm == "RS256" {
+
+			// Read JWKs URL if provided
+			if len(strings.TrimSpace(config.JWT.JwksURL)) != 0 {
+				if !a.jwkCache.IsRegistered(r.Context(), config.JWT.JwksURL) {
+					err := a.jwkCache.Register(r.Context(), config.JWT.JwksURL)
+					if err != nil {
+						return nil, err
+					}
+				}
+
+				set, err := a.jwkCache.Lookup(r.Context(), config.JWT.JwksURL)
+
+				if err != nil {
+					return nil, err
+				}
+				kid, ok := token.Header["kid"].(string)
+				if !ok {
+					return nil, unauthorizedError("Invalid token: no kid header present")
+				}
+				key, ok := set.LookupKeyID(kid)
+				if !ok {
+					return nil, unauthorizedError("Invalid token: unknown kid %s", kid)
+				}
+
+				// Convert jwk.Key to rsa.PublicKey using KeyExporter
+				pubKey := rsa.PublicKey{}
+
+				err = jwk.Export(key, &pubKey)
+
+				if err != nil {
+					return nil, err
+				}
+
+				return &pubKey, nil
+			}
+
+			// Fallback to Public Key file
 			dat, err := os.ReadFile(config.JWT.PublicKey)
 			if err != nil {
 				return nil, err
