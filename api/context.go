@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/url"
 
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/netlify/git-gateway/conf"
 	"github.com/netlify/git-gateway/models"
 )
@@ -31,28 +30,24 @@ const (
 	netlifyIDKey   = contextKey("netlify_id")
 )
 
-// withToken adds the JWT token to the context.
-func withToken(ctx context.Context, token *jwt.Token) context.Context {
-	return context.WithValue(ctx, tokenKey, token)
+// withToken adds the JWT claims to the context.
+func withToken(ctx context.Context, claims *GatewayClaims) context.Context {
+	return context.WithValue(ctx, tokenKey, claims)
 }
 
-// getToken reads the JWT token from the context.
-func getToken(ctx context.Context) *jwt.Token {
+// getToken reads the JWT claims from the context.
+func getToken(ctx context.Context) *GatewayClaims {
 	obj := ctx.Value(tokenKey)
 	if obj == nil {
 		return nil
 	}
 
-	return obj.(*jwt.Token)
+	return obj.(*GatewayClaims)
 }
 
 func getClaims(ctx context.Context) *GatewayClaims {
 	token := getToken(ctx)
-
-	if token == nil {
-		return nil
-	}
-	return token.Claims.(*GatewayClaims)
+	return token
 }
 
 func withRequestID(ctx context.Context, id string) context.Context {

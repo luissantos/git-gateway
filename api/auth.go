@@ -2,14 +2,16 @@ package api
 
 import (
 	"context"
-	"crypto/rsa"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"strings"
 
 	"os"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
+	"github.com/lestrrat-go/jwx/v3/jwt"
 	"github.com/sirupsen/logrus"
 )
 
@@ -39,72 +41,187 @@ func (a *API) extractBearerToken(w http.ResponseWriter, r *http.Request) (string
 	return matches[1], nil
 }
 
-func (a *API) parseJWTClaims(bearer string, r *http.Request) (context.Context, error) {
-	config := getConfig(r.Context())
-	parserOption := jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name})
-	if config.JWT.Algorithm == "RS256" {
-		parserOption = jwt.WithValidMethods([]string{jwt.SigningMethodRS256.Name})
+// extractKID extracts the kid (key ID) from the JWT header without verifying the signature
+func extractKID(bearer string) (string, error) {
+	parts := strings.Split(bearer, ".")
+	if len(parts) != 3 {
+		return "", unauthorizedError("Invalid token format")
 	}
 
-	audienceOption := jwt.WithAudience(config.JWT.Audience)
+	// Decode the header (first part)
+	headerBytes, err := decodeBase64URL(parts[0])
+	if err != nil {
+		return "", unauthorizedError("Invalid token header: %v", err)
+	}
 
-	p := jwt.NewParser(parserOption, audienceOption)
-	token, err := p.ParseWithClaims(bearer, &GatewayClaims{}, func(token *jwt.Token) (interface{}, error) {
+	var header map[string]interface{}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return "", unauthorizedError("Invalid token header: %v", err)
+	}
 
-		if config.JWT.Algorithm == "RS256" {
+	kid, ok := header["kid"].(string)
+	if !ok {
+		return "", unauthorizedError("Invalid token: no kid header present")
+	}
 
-			// Read JWKs URL if provided
-			if len(strings.TrimSpace(config.JWT.JwksURL)) != 0 {
-				if !a.jwkCache.IsRegistered(r.Context(), config.JWT.JwksURL) {
-					err := a.jwkCache.Register(r.Context(), config.JWT.JwksURL)
-					if err != nil {
-						return nil, err
-					}
-				}
+	return kid, nil
+}
 
-				set, err := a.jwkCache.Lookup(r.Context(), config.JWT.JwksURL)
+// decodeBase64URL decodes base64 URL-encoded data
+func decodeBase64URL(s string) ([]byte, error) {
+	// Add padding if necessary
+	switch len(s) % 4 {
+	case 2:
+		s += "=="
+	case 3:
+		s += "="
+	}
 
-				if err != nil {
-					return nil, err
-				}
-				kid, ok := token.Header["kid"].(string)
-				if !ok {
-					return nil, unauthorizedError("Invalid token: no kid header present")
-				}
-				key, ok := set.LookupKeyID(kid)
-				if !ok {
-					return nil, unauthorizedError("Invalid token: unknown kid %s", kid)
-				}
+	return base64.URLEncoding.DecodeString(s)
+}
 
-				// Convert jwk.Key to rsa.PublicKey using KeyExporter
-				pubKey := rsa.PublicKey{}
+func (a *API) parseJWTClaims(bearer string, r *http.Request) (context.Context, error) {
+	config := getConfig(r.Context())
 
-				err = jwk.Export(key, &pubKey)
+	var claims GatewayClaims
+	var algorithm jwa.SignatureAlgorithm
+	var key any
+	var err error
 
-				if err != nil {
-					return nil, err
-				}
-
-				return &pubKey, nil
-			}
-
-			// Fallback to Public Key file
-			dat, err := os.ReadFile(config.JWT.PublicKey)
-			if err != nil {
-				return nil, err
-			}
-			pubKey, err := jwt.ParseRSAPublicKeyFromPEM(dat)
-			if err != nil {
-				return nil, err
-			}
-			return pubKey, nil
+	if config.JWT.Algorithm == "RS256" {
+		algorithm = jwa.RS256()
+		key, err = a.loadRS256Key(bearer, r)
+		if err != nil {
+			return nil, err
 		}
+	} else {
+		// HS256 with shared secret
+		algorithm = jwa.HS256()
+		key = []byte(config.JWT.Secret)
+	}
 
-		return []byte(config.JWT.Secret), nil
-	})
+	token, err := jwt.ParseString(bearer, jwt.WithKey(algorithm, key))
 	if err != nil {
 		return nil, unauthorizedError("Invalid token: %v", err)
 	}
 
-	return withToken(r.Context(), token), nil
+	extractClaimsFromToken(token, &claims)
+
+	// Validate audience if specified
+	if config.JWT.Audience != "" {
+		if !validateAudience(token, config.JWT.Audience) {
+			return nil, unauthorizedError("Invalid token: audience mismatch")
+		}
+	}
+
+	return withToken(r.Context(), &claims), nil
+}
+
+// loadRS256Key loads the RS256 key from JWK cache or from a file
+func (a *API) loadRS256Key(bearer string, r *http.Request) (any, error) {
+	config := getConfig(r.Context())
+
+	// Read JWKs URL if provided
+	if len(strings.TrimSpace(config.JWT.JwksURL)) != 0 {
+		return a.loadKeyFromJWKCache(bearer, r)
+	}
+
+	// Fallback to Public Key file
+	return a.loadKeyFromFile(config.JWT.PublicKey)
+}
+
+// loadKeyFromJWKCache loads a key from the JWK cache using the kid header
+func (a *API) loadKeyFromJWKCache(bearer string, r *http.Request) (any, error) {
+	config := getConfig(r.Context())
+
+	if !a.jwkCache.IsRegistered(r.Context(), config.JWT.JwksURL) {
+		err := a.jwkCache.Register(r.Context(), config.JWT.JwksURL)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	set, err := a.jwkCache.Lookup(r.Context(), config.JWT.JwksURL)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get kid from unverified token
+	kid, err := extractKID(bearer)
+	if err != nil {
+		return nil, err
+	}
+
+	key, ok := set.LookupKeyID(kid)
+	if !ok {
+		return nil, unauthorizedError("Invalid token: unknown kid %s", kid)
+	}
+
+	return key, nil
+}
+
+// loadKeyFromFile loads a key from a PEM-encoded file
+func (a *API) loadKeyFromFile(keyPath string) (any, error) {
+	dat, err := os.ReadFile(keyPath)
+	if err != nil {
+		return nil, err
+	}
+
+	key, err := jwk.ParseKey(dat, jwk.WithPEM(true))
+	if err != nil {
+		return nil, unauthorizedError("Invalid token: failed to parse public key: %v", err)
+	}
+
+	return key, nil
+}
+
+// extractClaimsFromToken extracts custom and standard claims from a JWT token
+func extractClaimsFromToken(token jwt.Token, claims *GatewayClaims) {
+	// Extract custom claims
+	if err := token.Get("email", &claims.Email); err == nil {
+		// Field exists
+	}
+	if err := token.Get("app_metadata", &claims.AppMetaData); err == nil {
+		// Field exists
+	}
+	if err := token.Get("user_metadata", &claims.UserMetaData); err == nil {
+		// Field exists
+	}
+	extractStandardClaims(token, claims)
+}
+
+// validateAudience checks if the token's audience matches the expected audience
+func validateAudience(token jwt.Token, expectedAudience string) bool {
+	aud, ok := token.Audience()
+	if !ok {
+		return false
+	}
+	for _, a := range aud {
+		if a == expectedAudience {
+			return true
+		}
+	}
+	return false
+}
+
+// extractStandardClaims extracts standard JWT claims from a token
+func extractStandardClaims(token jwt.Token, claims *GatewayClaims) {
+	if iss, ok := token.Issuer(); ok {
+		claims.Iss = iss
+	}
+	if sub, ok := token.Subject(); ok {
+		claims.Sub = sub
+	}
+	if aud, ok := token.Audience(); ok {
+		claims.Aud = aud
+	}
+	if exp, ok := token.Expiration(); ok {
+		claims.Exp = exp.Unix()
+	}
+	if iat, ok := token.IssuedAt(); ok {
+		claims.Iat = iat.Unix()
+	}
+	if nbf, ok := token.NotBefore(); ok {
+		claims.Nbf = nbf.Unix()
+	}
 }

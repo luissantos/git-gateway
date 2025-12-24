@@ -4,7 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/lestrrat-go/jwx/v3/jwa"
+	"github.com/lestrrat-go/jwx/v3/jwt"
 	"github.com/netlify/git-gateway/models"
 )
 
@@ -16,7 +17,12 @@ type NetlifyMicroserviceClaims struct {
 	SiteURL    string `json:"site_url"`
 	InstanceID string `json:"id"`
 	NetlifyID  string `json:"netlify_id"`
-	jwt.RegisteredClaims
+	// Use the standard jwt package's StandardClaims equivalent for lestrrat-go
+	Iss string   `json:"iss"`
+	Sub string   `json:"sub"`
+	Aud []string `json:"aud"`
+	Exp int64    `json:"exp"`
+	Iat int64    `json:"iat"`
 }
 
 func (a *API) loadJWSSignatureHeader(w http.ResponseWriter, r *http.Request) (context.Context, error) {
@@ -36,13 +42,40 @@ func (a *API) loadInstanceConfig(w http.ResponseWriter, r *http.Request) (contex
 		return nil, badRequestError("Operator signature missing")
 	}
 
-	claims := NetlifyMicroserviceClaims{}
-	p := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Name}))
-	_, err := p.ParseWithClaims(signature, &claims, func(token *jwt.Token) (interface{}, error) {
-		return []byte(a.config.OperatorToken), nil
-	})
+	// Parse and verify the JWT with HS256
+	token, err := jwt.ParseString(signature, jwt.WithKey(jwa.HS256(), []byte(a.config.OperatorToken)))
 	if err != nil {
 		return nil, badRequestError("Operator microservice signature is invalid: %v", err)
+	}
+
+	claims := NetlifyMicroserviceClaims{}
+
+	// Extract custom claims
+	if err := token.Get("site_url", &claims.SiteURL); err == nil {
+		// Field exists
+	}
+	if err := token.Get("id", &claims.InstanceID); err == nil {
+		// Field exists
+	}
+	if err := token.Get("netlify_id", &claims.NetlifyID); err == nil {
+		// Field exists
+	}
+
+	// Extract standard claims
+	if iss, ok := token.Issuer(); ok {
+		claims.Iss = iss
+	}
+	if sub, ok := token.Subject(); ok {
+		claims.Sub = sub
+	}
+	if aud, ok := token.Audience(); ok {
+		claims.Aud = aud
+	}
+	if exp, ok := token.Expiration(); ok {
+		claims.Exp = exp.Unix()
+	}
+	if iat, ok := token.IssuedAt(); ok {
+		claims.Iat = iat.Unix()
 	}
 
 	instanceID := claims.InstanceID

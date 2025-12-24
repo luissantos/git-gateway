@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/lestrrat-go/httprc/v3"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/netlify/git-gateway/conf"
@@ -38,10 +37,16 @@ type API struct {
 }
 
 type GatewayClaims struct {
-	jwt.RegisteredClaims
 	Email        string                 `json:"email"`
 	AppMetaData  map[string]interface{} `json:"app_metadata"`
 	UserMetaData map[string]interface{} `json:"user_metadata"`
+	// Standard claims
+	Iss string   `json:"iss"`
+	Sub string   `json:"sub"`
+	Aud []string `json:"aud"`
+	Exp int64    `json:"exp"`
+	Iat int64    `json:"iat"`
+	Nbf int64    `json:"nbf,omitempty"`
 }
 
 // ListenAndServe starts the REST API
